@@ -1,4 +1,3 @@
-%%writefile streamlit_app.py
 import streamlit as st
 import pandas as pd, numpy as np, joblib, json
 from sklearn.preprocessing import StandardScaler
@@ -65,3 +64,4 @@ if uploaded:
         st.success("Predictions ready")
         st.dataframe(df.head())
         st.download_button("Download predictions CSV", df.to_csv(index=False).encode('utf-8'), "preds.csv", "text/csv")
+
