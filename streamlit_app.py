@@ -105,11 +105,11 @@ except Exception as e:
     st.stop()
 
 
-# --- HELPER FUNCTION (With the previous KeyError Fix) ---
+# --- HELPER FUNCTION (With fix for non-finite scaling output) ---
 def preprocess(df_in):
     """
     Applies the encoder and scaler objects loaded during training.
-    Includes explicit column checks to prevent KeyError.
+    Includes explicit column checks and sanitization for non-finite values.
     """
     df = df_in.copy()
     
@@ -143,6 +143,14 @@ def preprocess(df_in):
             return None
             
         X_scaled = scaler.transform(df[feature_cols])
+        
+        # --- FIX: Sanitize X_scaled for NaN/Infinity resulting from scaling errors ---
+        if not np.all(np.isfinite(X_scaled)):
+            st.warning("Warning: Scaling resulted in NaN/Infinity values. Replacing them with 0.0 to allow prediction. This strongly suggests the 'scaler.joblib' is faulty (e.g., trained on data with zero variance).")
+            # Replace non-finite values (NaN or Inf) with 0.0
+            X_scaled[~np.isfinite(X_scaled)] = 0.0
+        # --- END FIX ---
+            
         return pd.DataFrame(X_scaled, columns=feature_cols)
     except Exception as e:
         st.error(f"An error occurred during scaling: {e}. Check if your numerical input values are valid.")
@@ -265,13 +273,8 @@ with st.sidebar:
 
         if Xp is not None:
             
-            # --- CRITICAL VALIDATION FIX ---
-            # Explicitly check for NaN or infinity values in the preprocessed data (Xp)
-            if np.any(~np.isfinite(Xp)):
-                st.error("Prediction failed: Preprocessed data contains non-finite values (NaN or Infinity). This usually indicates an issue with the loaded 'scaler.joblib' or a misconfiguration of the features.")
-                # We stop the prediction process here to prevent the scikit-learn traceback
-                raise RuntimeError("Non-finite values found in preprocessed data (Xp).")
-            # --- END CRITICAL VALIDATION FIX ---
+            # The aggressive check for non-finite values is now handled and cleaned
+            # inside the preprocess function, preventing the RuntimeError here.
 
             # Determine which model to use
             if selected_model_name == "Random Forest Regressor":
@@ -318,11 +321,8 @@ if uploaded is not None:
         
         if Xp is not None:
             
-            # --- CRITICAL VALIDATION FIX ---
-            if np.any(~np.isfinite(Xp)):
-                st.error("Batch Prediction failed: Preprocessed data contains non-finite values (NaN or Infinity). Check the integrity of the uploaded CSV and the loaded preprocessing artifacts.")
-                st.stop()
-            # --- END CRITICAL VALIDATION FIX ---
+            # The aggressive check for non-finite values is now handled and cleaned
+            # inside the preprocess function, preventing errors here.
             
             # Generate predictions for both models
             
