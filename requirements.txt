@@ -4,3 +4,5 @@ scikit-learn
 joblib
 streamlit
 huggingface_hub
+seaborn
+matplotlib
