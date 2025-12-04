@@ -9,7 +9,7 @@ from huggingface_hub import hf_hub_download # NEW: Import for downloading large 
 # --- CONFIGURATION (!!! IMPORTANT: REPLACE THESE VALUES !!!) ---
 # 1. Replace <your-username> with your actual Hugging Face username.
 # 2. Replace <model-repo-name> with the name of the Hugging Face repo where you stored rf_model.joblib.
-HF_MODEL_REPO_ID = "<your-username>/<model-repo-name>" 
+HF_MODEL_REPO_ID = "Shalan1/student-performance-predictor-models" 
 RF_MODEL_FILENAME = "rf_model.joblib"
 # -----------------------------------------------------------------
 
@@ -184,3 +184,4 @@ if uploaded is not None:
                 mime="text/csv",
                 use_container_width=True
             )
+
