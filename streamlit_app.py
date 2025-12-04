@@ -50,20 +50,46 @@ def load_data_and_preprocess(file_path):
 
 @st.cache_resource
 def load_models_from_hf():
-    """Loads all models and preprocessing artifacts (RF from HF, others locally)."""
+    """
+    Loads all models and preprocessing artifacts (RF from HF, others locally).
+    Includes specific FileNotFoundError checks for local artifacts.
+    """
     
     with st.spinner(f"Downloading large model {RF_MODEL_FILENAME} from Hugging Face..."):
         model_path = hf_hub_download(repo_id=HF_MODEL_REPO_ID, filename=RF_MODEL_FILENAME)
     st.success("Download complete.")
     
-    # Load models
-    rf_model_loaded = joblib.load(model_path)
-    lr_model_loaded = joblib.load("lr_model.joblib")
-    scaler_loaded = joblib.load("scaler.joblib")
-    encoder_loaded = joblib.load("encoder.joblib")
+    # Load models and artifacts, handling missing local files specifically
+    try:
+        rf_model_loaded = joblib.load(model_path)
+    except Exception as e:
+        st.error(f"Error loading Random Forest model from path {model_path}: {e}")
+        raise
+        
+    try:
+        lr_model_loaded = joblib.load("lr_model.joblib")
+    except FileNotFoundError:
+        st.error("Missing local file: 'lr_model.joblib'. Please ensure it's committed to your repo.")
+        raise
+        
+    try:
+        scaler_loaded = joblib.load("scaler.joblib")
+    except FileNotFoundError:
+        st.error("Missing local file: 'scaler.joblib'. This artifact is critical for scaling inputs.")
+        raise
+        
+    try:
+        encoder_loaded = joblib.load("encoder.joblib")
+    except FileNotFoundError:
+        st.error("Missing local file: 'encoder.joblib'. This artifact is critical for encoding 'Extracurricular Activities'.")
+        raise
     
-    with open("feature_cols.json", "r") as f:
-        feature_cols_loaded = json.load(f)
+    try:
+        with open("feature_cols.json", "r") as f:
+            feature_cols_loaded = json.load(f)
+    except FileNotFoundError:
+        st.error("Missing local file: 'feature_cols.json'. This artifact is critical for identifying feature columns.")
+        raise
         
     return rf_model_loaded, lr_model_loaded, scaler_loaded, encoder_loaded, feature_cols_loaded
 
@@ -73,7 +99,9 @@ try:
     rf_model, lr_model, scaler, encoder, feature_cols = load_models_from_hf() 
     st.sidebar.success("All prediction artifacts loaded successfully.")
 except Exception as e:
-    st.error(f"Error during model loading: {e}. Check your HF_MODEL_REPO_ID and local files.")
+    # This block catches the exception raised in load_models_from_hf and stops the app
+    # The detailed error is already printed inside the function
+    st.error("Failed to initialize all models and preprocessing artifacts. See details above.")
     st.stop()
 
 
@@ -98,6 +126,10 @@ def preprocess(df_in):
     # 3. Handle Extracurricular Activities (Label Encoding)
     if 'Extracurricular Activities' in df.columns and not np.issubdtype(df['Extracurricular Activities'].dtype, np.number):
         try:
+            # The error is likely here if 'encoder' is not properly loaded (e.g., set to None or a non-encoder object)
+            if not hasattr(encoder, 'transform'):
+                 st.error("Encoder object is corrupted or missing. Check 'encoder.joblib'.")
+                 return None
             df['Extracurricular Activities'] = encoder.transform(df['Extracurricular Activities'])
         except ValueError:
             st.warning("Extracurricular Activities column contains labels not seen during training. Please use 'Yes' or 'No'.")
@@ -105,10 +137,15 @@ def preprocess(df_in):
     
     # 4. Apply Standard Scaling
     try:
+        # The error is also highly likely here if 'scaler' is not properly loaded
+        if not hasattr(scaler, 'transform'):
+            st.error("Scaler object is corrupted or missing. Check 'scaler.joblib'.")
+            return None
+            
         X_scaled = scaler.transform(df[feature_cols])
         return pd.DataFrame(X_scaled, columns=feature_cols)
     except Exception as e:
-        st.error(f"An error occurred during scaling: {e}")
+        st.error(f"An error occurred during scaling: {e}. Check if your numerical input values are valid.")
         return None
 
 
@@ -233,6 +270,12 @@ with st.sidebar:
             else:
                 model_to_use = lr_model
 
+            # Check if model object is valid before predicting
+            if not hasattr(model_to_use, 'predict'):
+                 st.error(f"The selected model ({selected_model_name}) object is corrupted or missing. Prediction halted.")
+                 # Stop further execution in this branch if model is invalid
+                 raise RuntimeError(f"Corrupted model: {selected_model_name}")
+
             prediction = model_to_use.predict(Xp)[0]
             
             st.subheader(f"{selected_model_name} Result:")
@@ -266,6 +309,15 @@ if uploaded is not None:
         
         if Xp is not None:
             # Generate predictions for both models
+            
+            # Defensive check for prediction function before use
+            if not hasattr(rf_model, 'predict'):
+                st.error("Random Forest model is invalid. Cannot perform batch predictions.")
+                st.stop()
+            if not hasattr(lr_model, 'predict'):
+                st.error("Linear Regression model is invalid. Cannot perform batch predictions.")
+                st.stop()
+                
             df['RF_Prediction (%)'] = rf_model.predict(Xp)
             df['LR_Prediction (%)'] = lr_model.predict(Xp)
             df['Ensemble_Avg (%)'] = df[['RF_Prediction (%)','LR_Prediction (%)']].mean(axis=1)
