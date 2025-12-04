@@ -190,7 +190,7 @@ with st.sidebar:
     st.header("1. Prediction Input")
     st.markdown("Enter the student's metrics below to get a prediction.")
 
-    # Model Selection (NEW)
+    # Model Selection 
     selected_model_name = st.radio(
         "Select Model for Prediction",
         ("Random Forest Regressor", "Linear Regression"),
@@ -199,18 +199,31 @@ with st.sidebar:
     
     st.markdown("---")
     
-    # Inputs
+    # Inputs (Now including all 5 features)
     inputs = {}
-    inputs['Hours Studied'] = st.slider("Hours Studied (Weekly)", min_value=0.0, max_value=100.0, value=15.0, step=0.5)
-    inputs['Sample Question Papers Attempted'] = st.slider("Sample Papers Attempted", min_value=0, max_value=15, value=3, step=1)
     
+    # 1. Hours Studied (Weekly)
+    inputs['Hours Studied'] = st.slider("1. Hours Studied (Weekly)", min_value=0.0, max_value=20.0, value=10.0, step=0.5)
+    
+    # 2. Previous Scores
+    inputs['Previous Scores'] = st.slider("2. Previous Exam Scores (0-100)", min_value=40, max_value=100, value=75, step=1)
+    
+    # 3. Sleep Hours
+    inputs['Sleep Hours'] = st.slider("3. Sleep Hours (Daily)", min_value=4.0, max_value=10.0, value=7.0, step=0.5)
+    
+    # 4. Sample Question Papers Attempted
+    inputs['Sample Question Papers Attempted'] = st.slider("4. Sample Papers Attempted", min_value=0, max_value=10, value=3, step=1)
+    
+    # 5. Extracurricular Activities
     opts = list(encoder.classes_) if hasattr(encoder, 'classes_') else ['No', 'Yes']
-    inputs['Extracurricular Activities'] = st.selectbox("Extracurricular Activities", options=opts, index=0 if 'No' in opts else 1)
+    inputs['Extracurricular Activities'] = st.selectbox("5. Extracurricular Activities", options=opts, index=0 if 'No' in opts else 1)
     
     st.markdown("---")
     
     if st.button("Calculate Prediction", use_container_width=True):
-        df_in = pd.DataFrame([inputs])
+        # Create a DataFrame from inputs, ensuring column order matches training
+        # We assume feature_cols contains the correct order from the training process
+        df_in = pd.DataFrame([inputs], columns=feature_cols) 
         Xp = preprocess(df_in)
 
         if Xp is not None:
@@ -223,7 +236,8 @@ with st.sidebar:
             prediction = model_to_use.predict(Xp)[0]
             
             st.subheader(f"{selected_model_name} Result:")
-            st.metric("Predicted Performance Index", f"{prediction:.2f}")
+            # Displaying the Performance Index as a percentage of success (0-100%)
+            st.metric("Predicted Success Rate", f"{prediction:.2f}%")
 
 
 # ----------------------------------------------------
@@ -246,17 +260,19 @@ if uploaded is not None:
     if missing:
         st.error(f"Missing essential columns: **{', '.join(missing)}** — ensure your CSV contains these columns (names must match exactly).")
     else:
-        Xp = preprocess(df)
+        # Ensure input columns are in the correct order before preprocessing/scaling
+        df_ordered = df[feature_cols]
+        Xp = preprocess(df_ordered)
         
         if Xp is not None:
             # Generate predictions for both models
-            df['RF_Prediction'] = rf_model.predict(Xp)
-            df['LR_Prediction'] = lr_model.predict(Xp)
-            df['Ensemble_Avg'] = df[['RF_Prediction','LR_Prediction']].mean(axis=1)
+            df['RF_Prediction (%)'] = rf_model.predict(Xp)
+            df['LR_Prediction (%)'] = lr_model.predict(Xp)
+            df['Ensemble_Avg (%)'] = df[['RF_Prediction (%)','LR_Prediction (%)']].mean(axis=1)
             
             st.success("Batch predictions complete!")
             
-            st.dataframe(df.head(10).style.highlight_max(axis=1, subset=['RF_Prediction', 'LR_Prediction', 'Ensemble_Avg']), use_container_width=True)
+            st.dataframe(df.head(10).style.highlight_max(axis=1, subset=['RF_Prediction (%)', 'LR_Prediction (%)', 'Ensemble_Avg (%)']), use_container_width=True)
             
             csv_data = df.to_csv(index=False).encode('utf-8')
             st.download_button(
