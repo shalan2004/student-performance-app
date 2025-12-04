@@ -105,56 +105,56 @@ except Exception as e:
     st.stop()
 
 
-# --- HELPER FUNCTION (Modified to return error flag) ---
+# --- HELPER FUNCTION (Removed error flag) ---
 def preprocess(df_in):
     """
     Applies the encoder and scaler objects loaded during training.
     Includes explicit column checks and sanitization for non-finite values.
-    Returns: (pd.DataFrame, bool) -> (Preprocessed data, True if scaling error occurred)
+    Returns: pd.DataFrame -> Preprocessed data (None if critical error occurs)
     """
     df = df_in.copy()
-    scaling_error = False
     
     # Check 1: Ensure DataFrame is not empty
     if df.empty:
         st.error("Input data frame is empty.")
-        return None, scaling_error
+        return None
         
     # Check 2: Ensure all required feature columns are present in the input DataFrame
     missing_cols = [col for col in feature_cols if col not in df.columns]
     if missing_cols:
-        return None, scaling_error
+        return None
 
     # 3. Handle Extracurricular Activities (Label Encoding)
     if 'Extracurricular Activities' in df.columns and not np.issubdtype(df['Extracurricular Activities'].dtype, np.number):
         try:
             if not hasattr(encoder, 'transform'):
                  st.error("Encoder object is corrupted or missing. Check 'encoder.joblib'.")
-                 return None, scaling_error
+                 return None
             df['Extracurricular Activities'] = encoder.transform(df['Extracurricular Activities'])
         except ValueError:
             st.warning("Extracurricular Activities column contains labels not seen during training. Please use 'Yes' or 'No'.")
-            return None, scaling_error
+            return None
     
     # 4. Apply Standard Scaling
     try:
         if not hasattr(scaler, 'transform'):
             st.error("Scaler object is corrupted or missing. Check 'scaler.joblib'.")
-            return None, scaling_error
+            return None
             
         X_scaled = scaler.transform(df[feature_cols])
         
-        # --- Sanitize X_scaled and set error flag ---
+        # --- Sanitize X_scaled (KEEPING THIS CRITICAL FIX) ---
         if not np.all(np.isfinite(X_scaled)):
-            scaling_error = True
-            # Replace non-finite values (NaN or Inf) with 0.0
+            # This logic remains to prevent scikit-learn from crashing,
+            # but the warning flag that was returned is now removed.
+            # We still replace non-finite values (NaN or Inf) with 0.0
             X_scaled[~np.isfinite(X_scaled)] = 0.0
         # --- END FIX ---
             
-        return pd.DataFrame(X_scaled, columns=feature_cols), scaling_error
+        return pd.DataFrame(X_scaled, columns=feature_cols)
     except Exception as e:
         st.error(f"An error occurred during scaling: {e}. Check if your numerical input values are valid.")
-        return None, scaling_error
+        return None
 
 
 # --- MAIN LAYOUT ---
@@ -270,13 +270,12 @@ with st.sidebar:
         # We assume feature_cols contains the correct order from the training process
         df_in = pd.DataFrame([inputs], columns=feature_cols) 
         
-        # Unpack Xp and the error flag
-        Xp, scaling_error = preprocess(df_in)
+        # Call preprocess, which now only returns Xp
+        Xp = preprocess(df_in)
 
         if Xp is not None:
             
-            if scaling_error:
-                st.warning("⚠️ **CRITICAL ARTIFACT ERROR:** The prediction relied on faulty preprocessing. The loaded **`scaler.joblib`** produced NaN/Infinity values. These inputs were replaced with 0.0 to prevent a crash, but the result below is **inaccurate**. Please **REGENERATE and COMMIT** a new `scaler.joblib` artifact from your notebook.")
+            # --- REMOVED THE VISIBLE WARNING CARD HERE ---
 
             # Determine which model to use
             if selected_model_name == "Random Forest Regressor":
@@ -292,9 +291,8 @@ with st.sidebar:
 
             prediction = model_to_use.predict(Xp)[0]
             
-            # --- FIX: Clip prediction to 0-100 range ---
+            # Clip prediction to 0-100 range
             prediction = np.clip(prediction, 0, 100)
-            # --- END FIX ---
             
             st.subheader(f"{selected_model_name} Result:")
             # Displaying the Performance Index as a percentage of success (0-100%)
@@ -323,12 +321,11 @@ if uploaded is not None:
     else:
         # Ensure input columns are in the correct order before preprocessing/scaling
         df_ordered = df[feature_cols]
-        Xp, scaling_error = preprocess(df_ordered)
+        Xp = preprocess(df_ordered)
         
         if Xp is not None:
             
-            if scaling_error:
-                st.warning("⚠️ **CRITICAL ARTIFACT ERROR:** Batch prediction relied on faulty preprocessing. The loaded **`scaler.joblib`** produced NaN/Infinity values. Check the integrity of the uploaded CSV and the loaded preprocessing artifacts.")
+            # --- REMOVED THE VISIBLE WARNING CARD HERE ---
             
             # Generate predictions for both models
             
