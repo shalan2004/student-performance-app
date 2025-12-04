@@ -264,6 +264,15 @@ with st.sidebar:
         Xp = preprocess(df_in)
 
         if Xp is not None:
+            
+            # --- CRITICAL VALIDATION FIX ---
+            # Explicitly check for NaN or infinity values in the preprocessed data (Xp)
+            if np.any(~np.isfinite(Xp)):
+                st.error("Prediction failed: Preprocessed data contains non-finite values (NaN or Infinity). This usually indicates an issue with the loaded 'scaler.joblib' or a misconfiguration of the features.")
+                # We stop the prediction process here to prevent the scikit-learn traceback
+                raise RuntimeError("Non-finite values found in preprocessed data (Xp).")
+            # --- END CRITICAL VALIDATION FIX ---
+
             # Determine which model to use
             if selected_model_name == "Random Forest Regressor":
                 model_to_use = rf_model
@@ -308,6 +317,13 @@ if uploaded is not None:
         Xp = preprocess(df_ordered)
         
         if Xp is not None:
+            
+            # --- CRITICAL VALIDATION FIX ---
+            if np.any(~np.isfinite(Xp)):
+                st.error("Batch Prediction failed: Preprocessed data contains non-finite values (NaN or Infinity). Check the integrity of the uploaded CSV and the loaded preprocessing artifacts.")
+                st.stop()
+            # --- END CRITICAL VALIDATION FIX ---
+            
             # Generate predictions for both models
             
             # Defensive check for prediction function before use
