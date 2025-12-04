@@ -4,8 +4,8 @@ import joblib
 import json
 import numpy as np
 import os
-import matplotlib.pyplot as plt # NEW
-import seaborn as sns # NEW
+import matplotlib.pyplot as plt 
+import seaborn as sns 
 from huggingface_hub import hf_hub_download
 
 # --- CONFIGURATION (Assumes Student_Performance.csv is in your repo) ---
@@ -85,14 +85,17 @@ def preprocess(df_in):
     """
     df = df_in.copy()
     
-    # Check 1: Ensure all required feature columns are present in the input DataFrame
+    # Check 1: Ensure DataFrame is not empty
+    if df.empty:
+        st.error("Input data frame is empty.")
+        return None
+        
+    # Check 2: Ensure all required feature columns are present in the input DataFrame
     missing_cols = [col for col in feature_cols if col not in df.columns]
     if missing_cols:
-        # In this specific case, the UI/CSV upload already checks for missing cols, 
-        # but this is the robust check needed before scaling.
         return None
 
-    # 2. Handle Extracurricular Activities (Label Encoding)
+    # 3. Handle Extracurricular Activities (Label Encoding)
     if 'Extracurricular Activities' in df.columns and not np.issubdtype(df['Extracurricular Activities'].dtype, np.number):
         try:
             df['Extracurricular Activities'] = encoder.transform(df['Extracurricular Activities'])
@@ -100,13 +103,12 @@ def preprocess(df_in):
             st.warning("Extracurricular Activities column contains labels not seen during training. Please use 'Yes' or 'No'.")
             return None
     
-    # 3. Apply Standard Scaling
+    # 4. Apply Standard Scaling
     try:
         X_scaled = scaler.transform(df[feature_cols])
         return pd.DataFrame(X_scaled, columns=feature_cols)
-    except KeyError as e:
-        # Should not happen with the check above, but kept for robustness
-        st.error(f"Failed to scale data due to missing column: {e}.")
+    except Exception as e:
+        st.error(f"An error occurred during scaling: {e}")
         return None
 
 
