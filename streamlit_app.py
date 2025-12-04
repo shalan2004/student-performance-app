@@ -4,44 +4,60 @@ import joblib
 import json
 import numpy as np
 import os
-from huggingface_hub import hf_hub_download # NEW: Import for downloading large files
+import matplotlib.pyplot as plt # NEW
+import seaborn as sns # NEW
+from huggingface_hub import hf_hub_download
 
-# --- CONFIGURATION (!!! IMPORTANT: REPLACE THESE VALUES !!!) ---
-# 1. Replace <your-username> with your actual Hugging Face username.
-# 2. Replace <model-repo-name> with the name of the Hugging Face repo where you stored rf_model.joblib.
+# --- CONFIGURATION (Assumes Student_Performance.csv is in your repo) ---
+DATA_FILE = "Student_Performance.csv"
 HF_MODEL_REPO_ID = "Shalan1/student-performance-predictor-models" 
 RF_MODEL_FILENAME = "rf_model.joblib"
-# -----------------------------------------------------------------
+
+# Hardcoded metrics from your Colab analysis for display
+MODEL_METRICS = {
+    "Linear Regression": {"R² Score": 0.9634, "MSE": 1.5471},
+    "Random Forest Regressor": {"R² Score": 0.9996, "MSE": 0.0019}
+}
+# ---------------------
 
 # Set page configuration for a better look
 st.set_page_config(
     layout="wide", 
-    page_title="Student Performance Predictor",
+    page_title="Student Performance Predictor & Analysis",
     initial_sidebar_state="expanded"
 )
 
-# --- Title and Description ---
-st.title("🎓 Student Performance Predictor")
-st.markdown("Model artifacts loaded from GitHub and Hugging Face Hub.")
-st.markdown("Select an option in the sidebar for a single prediction, or upload a CSV for batch processing.")
+# --- CACHED DATA & ARTIFACT LOADING ---
 
+@st.cache_data
+def load_data_and_preprocess(file_path):
+    """Loads the dataset and performs outlier removal as done during training."""
+    try:
+        df_full = pd.read_csv(file_path)
+    except FileNotFoundError:
+        st.error(f"Data file not found: {file_path}. Please ensure '{DATA_FILE}' is committed to your GitHub repository.")
+        st.stop()
+        
+    # Outlier Removal (as done in your Colab code)
+    Q1 = df_full['Performance Index'].quantile(0.25)
+    Q3 = df_full['Performance Index'].quantile(0.75)
+    IQR = Q3 - Q1
+    lower = Q1 - 1.5 * IQR
+    upper = Q3 + 1.5 * IQR
+    df_clean = df_full[(df_full['Performance Index'] >= lower) & (df_full['Performance Index'] <= upper)].copy()
+    
+    return df_full, df_clean
 
-# Use Streamlit's caching mechanism (st.cache_resource) for efficiency.
-# This function only runs once when the app is deployed or when the code changes.
 @st.cache_resource
 def load_models_from_hf():
-    """Downloads the large RF model from Hugging Face and loads all artifacts."""
+    """Loads all models and preprocessing artifacts (RF from HF, others locally)."""
     
-    # 1. Download the large RF model file
     with st.spinner(f"Downloading large model {RF_MODEL_FILENAME} from Hugging Face..."):
-        # hf_hub_download saves the file locally in a Streamlit cache directory and returns the local path
         model_path = hf_hub_download(repo_id=HF_MODEL_REPO_ID, filename=RF_MODEL_FILENAME)
     st.success("Download complete.")
     
-    # 2. Load all models and artifacts (RF from the downloaded path, others locally)
+    # Load models
     rf_model_loaded = joblib.load(model_path)
-    
-    # Load small artifacts from the GitHub repo directory
     lr_model_loaded = joblib.load("lr_model.joblib")
     scaler_loaded = joblib.load("scaler.joblib")
     encoder_loaded = joblib.load("encoder.joblib")
@@ -51,27 +67,32 @@ def load_models_from_hf():
         
     return rf_model_loaded, lr_model_loaded, scaler_loaded, encoder_loaded, feature_cols_loaded
 
-# --- Load Models + Feature List (NEW CALL BLOCK) ---
+# Load everything
+df_raw, df_processed = load_data_and_preprocess(DATA_FILE)
 try:
-    # Call the cached function to handle artifact loading
     rf_model, lr_model, scaler, encoder, feature_cols = load_models_from_hf() 
     st.sidebar.success("All prediction artifacts loaded successfully.")
-    
 except Exception as e:
-    st.error(f"Error during model loading: {e}. Please ensure you updated the `HF_MODEL_REPO_ID` and that all small files are committed to your GitHub repo.")
+    st.error(f"Error during model loading: {e}. Check your HF_MODEL_REPO_ID and local files.")
     st.stop()
 
 
-# --- Helper to preprocess a DataFrame of raw feature columns ---
+# --- HELPER FUNCTION (With the previous KeyError Fix) ---
 def preprocess(df_in):
     """
     Applies the encoder and scaler objects loaded during training.
-    Assumes df_in has the columns defined in feature_cols.
+    Includes explicit column checks to prevent KeyError.
     """
     df = df_in.copy()
     
-    # 1. Handle Extracurricular Activities (Label Encoding)
-    # Check if the column is present and if it's not already numeric (i.e., it's 'Yes'/'No')
+    # Check 1: Ensure all required feature columns are present in the input DataFrame
+    missing_cols = [col for col in feature_cols if col not in df.columns]
+    if missing_cols:
+        # In this specific case, the UI/CSV upload already checks for missing cols, 
+        # but this is the robust check needed before scaling.
+        return None
+
+    # 2. Handle Extracurricular Activities (Label Encoding)
     if 'Extracurricular Activities' in df.columns and not np.issubdtype(df['Extracurricular Activities'].dtype, np.number):
         try:
             df['Extracurricular Activities'] = encoder.transform(df['Extracurricular Activities'])
@@ -79,45 +100,110 @@ def preprocess(df_in):
             st.warning("Extracurricular Activities column contains labels not seen during training. Please use 'Yes' or 'No'.")
             return None
     
-    # 2. Apply Standard Scaling
-    # Ensure the columns are in the correct order for scaling
-    X_scaled = scaler.transform(df[feature_cols])
-    return pd.DataFrame(X_scaled, columns=feature_cols)
+    # 3. Apply Standard Scaling
+    try:
+        X_scaled = scaler.transform(df[feature_cols])
+        return pd.DataFrame(X_scaled, columns=feature_cols)
+    except KeyError as e:
+        # Should not happen with the check above, but kept for robustness
+        st.error(f"Failed to scale data due to missing column: {e}.")
+        return None
 
 
-# --- Sidebar for single prediction (Input Form) ---
+# --- MAIN LAYOUT ---
+st.title("🎓 Student Performance Predictor & Comprehensive Analysis")
+st.markdown("This dashboard provides an in-depth look at the dataset and predictions generated by two machine learning models.")
+
+# ----------------------------------------------------
+# 1. DATA INFORMATION & EXPLORATORY DATA ANALYSIS (EDA)
+# ----------------------------------------------------
+st.header("1. Data Overview & Analysis")
+data_tab, stats_tab, viz_tab, metrics_tab = st.tabs(["Dataset Preview", "Statistical Summary", "Visualizations", "Model Performance"])
+
+with data_tab:
+    st.subheader("Raw Dataset Preview")
+    st.markdown(f"**Dataset Shape:** `{df_raw.shape[0]} rows, {df_raw.shape[1]} columns`")
+    st.dataframe(df_raw.head(), use_container_width=True)
+    st.subheader("Data Types & Missing Values")
+    col1, col2 = st.columns(2)
+    with col1:
+        st.text("Data Types:\n" + str(df_raw.dtypes))
+    with col2:
+        st.text("Missing Values:\n" + str(df_raw.isnull().sum()))
+    st.markdown(f"**Outlier Removal:** {df_raw.shape[0] - df_processed.shape[0]} rows ({(df_raw.shape[0] - df_processed.shape[0])/df_raw.shape[0]*100:.2f}%) removed from 'Performance Index' column before training.")
+
+with stats_tab:
+    st.subheader("Statistical Summary")
+    st.dataframe(df_raw.describe(), use_container_width=True)
+
+with viz_tab:
+    st.subheader("Key Data Visualizations")
+    col1, col2 = st.columns(2)
+    
+    # Histogram
+    with col1:
+        fig, ax = plt.subplots(figsize=(6, 4))
+        sns.histplot(df_processed['Performance Index'], kde=True, ax=ax)
+        ax.set_title("Histogram - Performance Index (Cleaned)")
+        st.pyplot(fig)
+        
+    # Boxplot
+    with col2:
+        fig, ax = plt.subplots(figsize=(6, 4))
+        sns.boxplot(x=df_processed['Performance Index'], ax=ax)
+        ax.set_title("Boxplot - Performance Index (Cleaned)")
+        st.pyplot(fig)
+        
+    # Correlation Heatmap
+    st.subheader("Feature Correlation")
+    fig, ax = plt.subplots(figsize=(8, 6))
+    sns.heatmap(df_processed.corr(numeric_only=True), annot=True, cmap="coolwarm", ax=ax)
+    ax.set_title("Correlation Heatmap")
+    st.pyplot(fig)
+    st.markdown("The heatmap visually confirms that 'Hours Studied' and 'Sample Question Papers Attempted' are the strongest predictors of the Performance Index.")
+    # 
+
+with metrics_tab:
+    st.subheader("Trained Model Performance Scores")
+    
+    st.markdown("These scores were generated using the test set (20% of the data) after the models were trained.")
+
+    col1, col2 = st.columns(2)
+    
+    with col1:
+        st.metric("Linear Regression R² Score", f"{MODEL_METRICS['Linear Regression']['R² Score']:.4f}")
+        st.metric("Linear Regression MSE", f"{MODEL_METRICS['Linear Regression']['MSE']:.4f}")
+
+    with col2:
+        st.metric("Random Forest R² Score", f"{MODEL_METRICS['Random Forest Regressor']['R² Score']:.4f}")
+        st.metric("Random Forest MSE", f"{MODEL_METRICS['Random Forest Regressor']['MSE']:.4f}")
+        
+    st.info("The Random Forest Regressor has a significantly higher R² score and lower MSE, indicating it is the superior model for this prediction task.")
+
+
+# ----------------------------------------------------
+# 2. PREDICTION INPUT (Sidebar)
+# ----------------------------------------------------
 with st.sidebar:
-    st.header("1. Manual Input Prediction")
-    st.markdown("Enter the student's metrics below.")
+    st.header("1. Prediction Input")
+    st.markdown("Enter the student's metrics below to get a prediction.")
 
-    # Specific inputs based on the known features
+    # Model Selection (NEW)
+    selected_model_name = st.radio(
+        "Select Model for Prediction",
+        ("Random Forest Regressor", "Linear Regression"),
+        index=0 # Default to the better RF model
+    )
+    
+    st.markdown("---")
+    
+    # Inputs
     inputs = {}
+    inputs['Hours Studied'] = st.slider("Hours Studied (Weekly)", min_value=0.0, max_value=100.0, value=15.0, step=0.5)
+    inputs['Sample Question Papers Attempted'] = st.slider("Sample Papers Attempted", min_value=0, max_value=15, value=3, step=1)
     
-    # Feature 1: Hours Studied
-    inputs['Hours Studied'] = st.slider(
-        "Hours Studied (Weekly)", 
-        min_value=0.0, 
-        max_value=100.0, 
-        value=15.0, 
-        step=0.5
-    )
-    
-    # Feature 2: Sample Question Papers Attempted
-    inputs['Sample Question Papers Attempted'] = st.slider(
-        "Sample Papers Attempted", 
-        min_value=0, 
-        max_value=15, 
-        value=3, 
-        step=1
-    )
-    
-    # Feature 3: Extracurricular Activities (Categorical)
     opts = list(encoder.classes_) if hasattr(encoder, 'classes_') else ['No', 'Yes']
-    inputs['Extracurricular Activities'] = st.selectbox(
-        "Extracurricular Activities", 
-        options=opts,
-        index=0 if 'No' in opts else 1
-    )
+    inputs['Extracurricular Activities'] = st.selectbox("Extracurricular Activities", options=opts, index=0 if 'No' in opts else 1)
     
     st.markdown("---")
     
@@ -126,24 +212,22 @@ with st.sidebar:
         Xp = preprocess(df_in)
 
         if Xp is not None:
-            # Generate Predictions
-            pred_rf = rf_model.predict(Xp)[0]
-            pred_lr = lr_model.predict(Xp)[0]
+            # Determine which model to use
+            if selected_model_name == "Random Forest Regressor":
+                model_to_use = rf_model
+            else:
+                model_to_use = lr_model
+
+            prediction = model_to_use.predict(Xp)[0]
             
-            st.subheader("Prediction Results:")
-            
-            col1, col2, col3 = st.columns(3)
-            with col1:
-                st.metric("Random Forest (RF)", f"{pred_rf:.2f}", help="Generally higher accuracy.")
-            with col2:
-                st.metric("Linear Regression (LR)", f"{pred_lr:.2f}", help="Simpler, more interpretable model.")
-            with col3:
-                ensemble_avg = (pred_rf + pred_lr) / 2
-                st.metric("Ensemble Average", f"{ensemble_avg:.2f}", delta="Recommendation")
+            st.subheader(f"{selected_model_name} Result:")
+            st.metric("Predicted Performance Index", f"{prediction:.2f}")
 
 
-# --- CSV upload for batch predictions ---
-st.subheader("2. Batch Prediction: Upload CSV")
+# ----------------------------------------------------
+# 3. BATCH PREDICTION (Main Area)
+# ----------------------------------------------------
+st.header("2. Batch Prediction: Upload CSV")
 st.info(f"Your CSV must contain these columns: {', '.join(feature_cols)}")
 
 uploaded = st.file_uploader("Upload CSV for batch predictions", type="csv")
@@ -155,27 +239,23 @@ if uploaded is not None:
         st.error(f"Could not read CSV file: {e}")
         st.stop()
         
-    # Check for missing columns
     missing = [c for c in feature_cols if c not in df.columns]
     
     if missing:
         st.error(f"Missing essential columns: **{', '.join(missing)}** — ensure your CSV contains these columns (names must match exactly).")
     else:
-        # Preprocess and predict
         Xp = preprocess(df)
         
         if Xp is not None:
-            # Generate Predictions
+            # Generate predictions for both models
             df['RF_Prediction'] = rf_model.predict(Xp)
             df['LR_Prediction'] = lr_model.predict(Xp)
             df['Ensemble_Avg'] = df[['RF_Prediction','LR_Prediction']].mean(axis=1)
             
             st.success("Batch predictions complete!")
             
-            # Display results
             st.dataframe(df.head(10).style.highlight_max(axis=1, subset=['RF_Prediction', 'LR_Prediction', 'Ensemble_Avg']), use_container_width=True)
             
-            # Download button
             csv_data = df.to_csv(index=False).encode('utf-8')
             st.download_button(
                 "Download Predictions CSV", 
@@ -184,4 +264,3 @@ if uploaded is not None:
                 mime="text/csv",
                 use_container_width=True
             )
-
