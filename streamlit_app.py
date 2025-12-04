@@ -3,6 +3,15 @@ import pandas as pd
 import joblib
 import json
 import numpy as np
+import os
+from huggingface_hub import hf_hub_download # NEW: Import for downloading large files
+
+# --- CONFIGURATION (!!! IMPORTANT: REPLACE THESE VALUES !!!) ---
+# 1. Replace <your-username> with your actual Hugging Face username.
+# 2. Replace <model-repo-name> with the name of the Hugging Face repo where you stored rf_model.joblib.
+HF_MODEL_REPO_ID = "<your-username>/<model-repo-name>" 
+RF_MODEL_FILENAME = "rf_model.joblib"
+# -----------------------------------------------------------------
 
 # Set page configuration for a better look
 st.set_page_config(
@@ -13,27 +22,43 @@ st.set_page_config(
 
 # --- Title and Description ---
 st.title("🎓 Student Performance Predictor")
-st.markdown("Use this application to predict a student's **Performance Index** based on key metrics.")
+st.markdown("Model artifacts loaded from GitHub and Hugging Face Hub.")
 st.markdown("Select an option in the sidebar for a single prediction, or upload a CSV for batch processing.")
 
-try:
-    # --- Load Models + Feature List ---
-    # These files MUST be in the same directory as this script.
-    rf_model = joblib.load("rf_model.joblib")
-    lr_model = joblib.load("lr_model.joblib")
-    scaler = joblib.load("scaler.joblib")
-    encoder = joblib.load("encoder.joblib")
+
+# Use Streamlit's caching mechanism (st.cache_resource) for efficiency.
+# This function only runs once when the app is deployed or when the code changes.
+@st.cache_resource
+def load_models_from_hf():
+    """Downloads the large RF model from Hugging Face and loads all artifacts."""
+    
+    # 1. Download the large RF model file
+    with st.spinner(f"Downloading large model {RF_MODEL_FILENAME} from Hugging Face..."):
+        # hf_hub_download saves the file locally in a Streamlit cache directory and returns the local path
+        model_path = hf_hub_download(repo_id=HF_MODEL_REPO_ID, filename=RF_MODEL_FILENAME)
+    st.success("Download complete.")
+    
+    # 2. Load all models and artifacts (RF from the downloaded path, others locally)
+    rf_model_loaded = joblib.load(model_path)
+    
+    # Load small artifacts from the GitHub repo directory
+    lr_model_loaded = joblib.load("lr_model.joblib")
+    scaler_loaded = joblib.load("scaler.joblib")
+    encoder_loaded = joblib.load("encoder.joblib")
     
     with open("feature_cols.json", "r") as f:
-        feature_cols = json.load(f)
+        feature_cols_loaded = json.load(f)
+        
+    return rf_model_loaded, lr_model_loaded, scaler_loaded, encoder_loaded, feature_cols_loaded
 
+# --- Load Models + Feature List (NEW CALL BLOCK) ---
+try:
+    # Call the cached function to handle artifact loading
+    rf_model, lr_model, scaler, encoder, feature_cols = load_models_from_hf() 
     st.sidebar.success("All prediction artifacts loaded successfully.")
-
-except FileNotFoundError as e:
-    st.error(f"Error loading models or configuration: {e}. Please ensure all required files (rf_model.joblib, lr_model.joblib, scaler.joblib, encoder.joblib, and feature_cols.json) are in the root directory.")
-    st.stop()
+    
 except Exception as e:
-    st.error(f"An unexpected error occurred during artifact loading: {e}")
+    st.error(f"Error during model loading: {e}. Please ensure you updated the `HF_MODEL_REPO_ID` and that all small files are committed to your GitHub repo.")
     st.stop()
 
 
